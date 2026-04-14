@@ -1,0 +1,42 @@
+{
+  "mqtt": {
+    "host": "MQTT_BROKER_IP_OR_HOSTNAME",
+    "port": 1883,
+    "client_id": "pi3_monitor",
+    "keepalive": 60,
+    "username": null,
+    "password": null
+  },
+  "device": {
+    "name": "pi3",
+    "ip": "RASPBERRY_PI_IP"
+  },
+  "smartcam": {
+    "log_dir": "/home/pi/smartcam/logs",
+    "mediamtx_bin": "/home/pi/smartcam/mediamtx/mediamtx",
+    "mediamtx_cfg": "/home/pi/smartcam/mediamtx.yml",
+    "rtsp": {
+      "host": "RASPBERRY_PI_IP",
+      "port": 8554,
+      "path": "stream",
+      "publishUrl": "rtsp://127.0.0.1:8554/stream"
+    }
+  },
+  "topics": {
+    "smartcam/pi3/control": {
+      "handler": "smartcam",
+      "statusTopic": "smartcam/pi3/status",
+      "commands": [
+        "start_stream",
+        "stop_stream",
+        "start_all",
+        "stop_all"
+      ]
+    },
+    "sensehat/pi3/control": {
+      "handler": "sensehat",
+      "statusTopic": "sensehat/pi3/status"
+    }
+  },
+  "statusTopic": "pi3/monitor/status"
+}
