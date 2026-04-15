@@ -72,6 +72,15 @@ Forces the LED matrix on (solid white) or shuts it down completely.
 }
 ```
 
+### Blink Eye Animation
+Starts a looping blinking-eye animation on the LED matrix. The animation keeps running until a lights-off style command is sent.
+**Payload:**
+```json
+{
+  "action": "blink"
+}
+```
+
 ### Start / Stop Snake Game
 Boots the interactive interactive Snake game using the Sense HAT joystick.
 **Payload (Start):**

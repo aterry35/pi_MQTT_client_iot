@@ -28,6 +28,7 @@ Unified Raspberry Pi 3 MQTT control project for Sense HAT and SmartCam control.
 - `sensehat/pi3/control`
   - `read_once`
   - `show_text`
+  - `blink`
   - `lights_on`
   - `lights_off`
   - `start_snake`

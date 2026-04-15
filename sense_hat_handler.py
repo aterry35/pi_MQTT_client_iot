@@ -25,6 +25,15 @@ YELLOW = (220, 180, 0)
 PURPLE = (150, 0, 180)
 ORANGE = (255, 100, 0)
 WALL = (0, 80, 180)
+SILVER = (150, 150, 150)
+BROWN = (120, 70, 20)
+MINION_YELLOW = (255, 210, 40)
+DARK_EYE = (8, 8, 12)
+COPPER = (140, 90, 55)
+GOLD = (225, 175, 70)
+ICE = (235, 245, 255)
+BRIGHT_BLUE = (65, 175, 255)
+HIGHLIGHT = (255, 255, 255)
 
 # Game Rules
 GRID = 8
@@ -73,6 +82,59 @@ def random_food(snake: deque, walls: set) -> Optional[tuple]:
     occupied = set(snake) | set(walls)
     free = [(x, y) for y in range(GRID) for x in range(GRID) if (x, y) not in occupied]
     return random.choice(free) if free else None
+
+
+def render_pixel_art(rows: List[str], palette: Dict[str, tuple]) -> List[tuple]:
+    return [palette[ch] for row in rows for ch in row]
+
+
+def build_eye_frame(stage: str = 'open') -> List[tuple]:
+    palette = {
+        '.': BLACK,
+        'D': DARK_EYE,
+        'C': COPPER,
+        'G': GOLD,
+        'W': ICE,
+        'B': BLUE,
+        'L': BRIGHT_BLUE,
+        'H': HIGHLIGHT,
+    }
+
+    if stage == 'closed':
+        rows = [
+            "........",
+            ".CGGGGC.",
+            "CDDDDDDC",
+            "DDDDDDDD",
+            "..HHHH..",
+            "...WW...",
+            "........",
+            "........",
+        ]
+    elif stage == 'half':
+        rows = [
+            "........",
+            ".CGGGGC.",
+            "CDDDDDDC",
+            "DDDDDDDD",
+            ".HLLLLH.",
+            "...BB...",
+            "..C..C..",
+            "........",
+        ]
+    else:
+        rows = [
+            "........",
+            ".CGGGGC.",
+            "CDDDDDDC",
+            "DDDDDDDD",
+            "HLLBBLLH",
+            ".WLLLLW.",
+            "..C..C..",
+            "........",
+        ]
+
+    return render_pixel_art(rows, palette)
 
 
 class SnakeMode:
@@ -275,6 +337,82 @@ class SnakeMode:
             self._set_state(state='stopped', mode='snake')
 
 
+class BlinkMode:
+    def __init__(self, sense: SenseHat, lock: threading.RLock):
+        self.sense = sense
+        self.lock = lock
+        self._thread = None
+        self._stop = threading.Event()
+        self._state_lock = threading.Lock()
+        self._state = {'state': 'idle', 'mode': 'blink'}
+
+    def status(self) -> dict:
+        with self._state_lock:
+            return dict(self._state)
+
+    def _set_state(self, **kwargs):
+        with self._state_lock:
+            self._state = kwargs
+
+    def is_running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
+    def _draw(self, stage: str = 'open'):
+        if not self.sense:
+            return
+        with self.lock:
+            self.sense.set_pixels(build_eye_frame(stage=stage))
+
+    def start(self) -> dict:
+        if self.is_running():
+            return self.status()
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            st = self.status()
+            if st.get('state') != 'idle':
+                return st
+            time.sleep(0.05)
+        return self.status()
+
+    def stop(self) -> dict:
+        self._stop.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2)
+        if self.sense:
+            with self.lock:
+                self.sense.clear()
+        self._set_state(state='stopped', mode='blink')
+        return self.status()
+
+    def _run(self):
+        self._set_state(state='blinking', mode='blink')
+        try:
+            while not self._stop.is_set():
+                self._draw(stage='open')
+                if self._stop.wait(random.uniform(1.5, 2.8)):
+                    break
+                self._draw(stage='half')
+                if self._stop.wait(0.12):
+                    break
+                self._draw(stage='closed')
+                if self._stop.wait(0.11):
+                    break
+                self._draw(stage='half')
+                if self._stop.wait(0.12):
+                    break
+                self._draw(stage='open')
+                if self._stop.wait(0.10):
+                    break
+        finally:
+            if self.sense:
+                with self.lock:
+                    self.sense.clear()
+            self._set_state(state='stopped', mode='blink')
+
+
 class SenseHatHandler:
     def __init__(self):
         self.sense = SenseHat() if SenseHat else None
@@ -287,6 +425,10 @@ class SenseHatHandler:
         self.debounce_time = 0.15
         self._last_event_time = 0.0
 
+        # Display modes
+        self.snake = SnakeMode(self.sense, self.lock, self.get_debounced_events) if self.sense else None
+        self.blink = BlinkMode(self.sense, self.lock) if self.sense else None
+
         # Background Message Queue
         self._message_queue = deque()
         self._message_thread_event = threading.Event()
@@ -294,8 +436,12 @@ class SenseHatHandler:
         self._background_thread = threading.Thread(target=self._background_worker, daemon=True)
         self._background_thread.start()
 
-        # Snake game
-        self.snake = SnakeMode(self.sense, self.lock, self.get_debounced_events) if self.sense else None
+    def _active_display_mode(self) -> Optional[str]:
+        if self.snake and self.snake.is_running():
+            return 'snake'
+        if self.blink and self.blink.is_running():
+            return 'blink'
+        return None
 
     def get_debounced_events(self) -> List[Any]:
         """Provides debounced joystick events from SenseHAT."""
@@ -327,6 +473,10 @@ class SenseHatHandler:
             if self._stop_background.is_set():
                 break
 
+            if self._active_display_mode():
+                time.sleep(0.1)
+                continue
+
             msg_data = None
             with self.lock:
                 if self._message_queue:
@@ -345,9 +495,10 @@ class SenseHatHandler:
         """Queue a message to be shown asynchronously."""
         if not self.sense:
             return {'ok': False, 'error': 'sense_hat module unavailable'}
-            
-        if self.snake and self.snake.is_running():
-            return {'state': 'busy', 'mode': 'snake'}
+
+        mode = self._active_display_mode()
+        if mode:
+            return {'state': 'busy', 'mode': mode}
             
         with self.lock:
             self._message_queue.append((text, kwargs))
@@ -392,9 +543,10 @@ class SenseHatHandler:
     def lights_on(self) -> Dict[str, Any]:
         if not self.sense:
             return {'ok': False, 'error': 'sense_hat module unavailable'}
-            
-        if self.snake and self.snake.is_running():
-            return {'state': 'busy', 'mode': 'snake'}
+
+        mode = self._active_display_mode()
+        if mode:
+            return {'state': 'busy', 'mode': mode}
             
         with self.lock:
             self.sense.clear(self.on_color)
@@ -410,16 +562,32 @@ class SenseHatHandler:
             
         if self.snake and self.snake.is_running():
             return self.snake.stop()
+        if self.blink and self.blink.is_running():
+            return self.blink.stop()
             
         with self.lock:
             self.sense.clear()
             
         return {'state': 'lights_off'}
 
+    def start_blink(self) -> Dict[str, Any]:
+        if not self.sense or not self.blink:
+            return {'ok': False, 'error': 'sense_hat module unavailable'}
+
+        if self.blink.is_running():
+            return self.blink.status()
+
+        if self.snake and self.snake.is_running():
+            return {'state': 'busy', 'mode': 'snake'}
+
+        return self.blink.start()
+
     def stop(self):
         """Cleanup worker threads."""
         self._stop_background.set()
         self._message_thread_event.set()
+        if self.blink:
+            self.blink.stop()
         if self.snake:
             self.snake.stop()
 
@@ -432,6 +600,8 @@ class SenseHatHandler:
             return {'state': 'reading', 'reading': self.reading()}
         if action == 'show_text':
             return self.queue_message(payload.get('text', ''))
+        if action in ('blink', 'start_blink') or text == 'blink':
+            return self.start_blink()
         if action in ('lights_on', 'led_on') or text in ('lights on', 'led on', 'on'):
             return self.lights_on()
         if action in ('lights_off', 'led_off', 'clear') or text in ('lights off', 'led off', 'off', 'clear'):
@@ -439,6 +609,8 @@ class SenseHatHandler:
         if action in ('snake', 'start_snake') or text == 'snake':
             if not self.snake:
                 return {'ok': False, 'error': 'sense_hat module unavailable'}
+            if self.blink and self.blink.is_running():
+                return {'state': 'busy', 'mode': 'blink'}
             return self.snake.start()
         if action in ('stop_snake',) or text == 'stop snake':
             if not self.snake:
@@ -447,6 +619,8 @@ class SenseHatHandler:
         if action == 'status' or text == 'status':
             if self.snake and self.snake.is_running():
                 return self.snake.status()
+            if self.blink and self.blink.is_running():
+                return self.blink.status()
             return {'state': 'idle'}
             
         if 'text' in payload:
